@@ -1,5 +1,5 @@
 /* eslint no-unused-expressions:0, no-invalid-this:0, prefer-arrow-callback: 0 */
-/* globals beforeEach, afterEach, describe, it */
+/* globals beforeEach, afterEach, describe, it, before */
 
 'use strict';
 
@@ -14,6 +14,8 @@ const zlib = require('zlib');
 chai.config.includeStack = true;
 
 describe('Shared Funcs Tests', function () {
+    this.timeout(100 * 1000); // eslint-disable-line no-invalid-this
+
     describe('Logger tests', function () {
         it('Should create a logger', function () {
             expect(
@@ -260,8 +262,7 @@ describe('Shared Funcs Tests', function () {
                 let mail = {
                     data: {
                         attachment: {
-                            path:
-                                'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=='
+                            path: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=='
                         }
                     }
                 };
@@ -311,8 +312,7 @@ describe('Shared Funcs Tests', function () {
                 let mail = {
                     data: {
                         attachment: {
-                            path:
-                                'data:image/png;charset=iso-8859-1;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=='
+                            path: 'data:image/png;charset=iso-8859-1;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=='
                         }
                     }
                 };
@@ -379,6 +379,201 @@ describe('Shared Funcs Tests', function () {
 
         it('should encode low codes', function () {
             expect(shared.encodeXText('tere t\tre')).to.equal('tere+20t+09re');
+        });
+    });
+
+    describe('#resolveHostname tests', function () {
+        let networkInterfaces;
+
+        before(function (done) {
+            networkInterfaces = JSON.parse(JSON.stringify(shared.networkInterfaces));
+            done();
+        });
+
+        beforeEach(function (done) {
+            shared.dnsCache.clear();
+
+            done();
+        });
+
+        afterEach(function (done) {
+            // reset network interfaces
+            Object.keys(shared.networkInterfaces).forEach(key => {
+                delete shared.networkInterfaces[key];
+            });
+
+            Object.keys(networkInterfaces).forEach(key => {
+                shared.networkInterfaces[key] = networkInterfaces[key];
+            });
+
+            done();
+        });
+
+        it('should resolve a single IPv4 entry', function (done) {
+            shared.resolveHostname({ host: 'ipv4.single.dev.ethereal.email' }, (err, result) => {
+                expect(err).to.not.exist;
+                expect(result).to.deep.equal({
+                    servername: 'ipv4.single.dev.ethereal.email',
+                    host: '95.216.108.161',
+                    cached: false
+                });
+                shared.resolveHostname({ host: 'ipv4.single.dev.ethereal.email' }, (err, result) => {
+                    expect(err).to.not.exist;
+                    expect(result).to.deep.equal({
+                        servername: 'ipv4.single.dev.ethereal.email',
+                        host: '95.216.108.161',
+                        cached: true
+                    });
+                    done();
+                });
+            });
+        });
+
+        it('should resolve multiple IPv4 entries', function (done) {
+            let found = new Set();
+            let count = 0;
+
+            let resolveNext = () => {
+                if (count++ > 100) {
+                    expect(new Error('too many tries')).to.not.exist;
+                    return done();
+                }
+
+                if (found.size === 3) {
+                    return done();
+                }
+
+                shared.resolveHostname({ host: 'ipv4.multi.dev.ethereal.email', dnsTtl: 1 }, (err, result) => {
+                    expect(err).to.not.exist;
+
+                    expect(result.servername).to.equal('ipv4.multi.dev.ethereal.email');
+                    expect(result.host).to.exist;
+
+                    found.add(result.host);
+
+                    setTimeout(resolveNext, 10);
+                });
+            };
+
+            resolveNext();
+        });
+
+        it('should resolve a single IPv6 entry', function (done) {
+            // ensure that there is a single Ipv6 interface "available"
+            Object.keys(shared.networkInterfaces).forEach(key => {
+                delete shared.networkInterfaces[key];
+            });
+
+            shared.networkInterfaces.en0 = [
+                {
+                    address: 'fe80::184e:7a8e:2d67:be86',
+                    netmask: 'ffff:ffff:ffff:ffff::',
+                    family: 'IPv6',
+                    mac: 'f0:18:98:57:76:44',
+                    internal: false,
+                    cidr: 'fe80::184e:7a8e:2d67:be86/64',
+                    scopeid: 6
+                }
+            ];
+
+            shared.resolveHostname({ host: 'ipv6.single.dev.ethereal.email' }, (err, result) => {
+                expect(err).to.not.exist;
+                expect(result).to.deep.equal({
+                    servername: 'ipv6.single.dev.ethereal.email',
+                    host: '2a01:4f9:3051:4501::2',
+                    cached: false
+                });
+                shared.resolveHostname({ host: 'ipv6.single.dev.ethereal.email' }, (err, result) => {
+                    expect(err).to.not.exist;
+                    expect(result).to.deep.equal({
+                        servername: 'ipv6.single.dev.ethereal.email',
+                        host: '2a01:4f9:3051:4501::2',
+                        cached: true
+                    });
+                    done();
+                });
+            });
+        });
+
+        it('should fail missing address', function (done) {
+            shared.resolveHostname({ host: 'missing.single.dev.ethereal.email' }, err => {
+                expect(err).to.exist;
+                done();
+            });
+        });
+
+        it('should return provided IP', function (done) {
+            shared.resolveHostname({ host: '1.2.3.4', servername: 'example.com' }, (err, result) => {
+                expect(err).to.not.exist;
+                expect(result).to.deep.equal({
+                    servername: 'example.com',
+                    host: '1.2.3.4',
+                    cached: false
+                });
+                done();
+            });
+        });
+
+        it('should fail resolving a single internal IPv4 entry', function (done) {
+            // ensure that there is a single Ipv4 interface "available"
+            Object.keys(shared.networkInterfaces).forEach(key => {
+                delete shared.networkInterfaces[key];
+            });
+
+            shared.networkInterfaces.lo = [
+                {
+                    address: '127.0.0.1',
+                    netmask: '255.0.0.0',
+                    family: 'IPv4',
+                    mac: '00:00:00:00:00:00',
+                    internal: true,
+                    cidr: '127.0.0.1/8'
+                }
+            ];
+
+            shared.resolveHostname({ host: 'ipv4.single.dev.ethereal.email' }, (err, result) => {
+                expect(err).to.not.exist;
+                expect(result).to.deep.equal({
+                    servername: 'ipv4.single.dev.ethereal.email',
+                    host: 'ipv4.single.dev.ethereal.email',
+                    cached: false
+                });
+                done();
+            });
+        });
+
+        it('should succeed resolving a single internal IPv4 entry', function (done) {
+            // ensure that there is a single Ipv4 interface "available"
+            Object.keys(shared.networkInterfaces).forEach(key => {
+                delete shared.networkInterfaces[key];
+            });
+
+            shared.networkInterfaces.lo = [
+                {
+                    address: '127.0.0.1',
+                    netmask: '255.0.0.0',
+                    family: 'IPv4',
+                    mac: '00:00:00:00:00:00',
+                    internal: true,
+                    cidr: '127.0.0.1/8'
+                }
+            ];
+
+            shared.resolveHostname(
+                {
+                    host: 'ipv4.single.dev.ethereal.email',
+                    allowInternalNetworkInterfaces: true
+                },
+                (err, result) => {
+                    expect(err).to.not.exist;
+                    expect(result).to.deep.equal({
+                        servername: 'ipv4.single.dev.ethereal.email',
+                        host: '95.216.108.161',
+                        cached: false
+                    });
+                    done();
+                }
+            );
         });
     });
 });
